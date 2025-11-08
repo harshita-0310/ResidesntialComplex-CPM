@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Residential Complex — 3D Floor Plan</title>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap');
+    body {
+      margin: 0;
+      background-color: #121212; /* Black background */
+      font-family: 'Poppins', sans-serif;
+      color: #f0f0f0; /* Light text color for contrast */
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    h2 {
+      margin-top: 24px;
+      font-size: 1.8rem;
+      color: #e0e0e0; /* Light heading color */
+      text-align: center;
+    }
+
+    .btn-container {
+      margin: 12px 0 20px 0;
+      display: flex;
+      gap: 10px;
+    }
+
+    button {
+      background-color: #1f6feb;
+      color: white;
+      border: none;
+      padding: 12px 25px;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: all 0.3s ease-in-out;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      font-weight: 600;
+    }
+
+    button:hover {
+      background-color: #144fc4;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 10px rgba(0, 0, 0, 0.15);
+    }
+    
+    #typeV.active, #typeF.active {
+      background-color: #e0364f; /* Highlight active button */
+    }
+
+    #floorCanvas {
+      display: block;
+      margin: 10px auto;
+      background-color: #ffffff; /* Frame white as requested */
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5); /* Stronger shadow on dark background */
+      touch-action: none;
+    }
+
+    p {
+      font-size: 0.85rem;
+      color: #ccc;
+      margin-bottom: 10px;
+    }
+
+    @media (max-width: 600px) {
+      h2 { font-size: 1.5rem; }
+      button { padding: 10px 15px; font-size: 0.9rem; }
+      .btn-container { flex-direction: column; gap: 5px; }
+    }
+  </style>
+</head>
+<body>
+  <h2>Residential Complex 3D Viewer</h2>
+  <div class="btn-container">
+    <button id="typeV" class="active">Type V (E)</button>
+    <button id="typeF">Type VI (F)</button>
+  </div>
+  <p>Click + drag to rotate | Scroll to zoom</p>
+  <canvas id="floorCanvas"></canvas>
+
+  <script>
+    // --- SCENE SETUP ---
+    const container = document.body;
+    const canvas = document.getElementById('floorCanvas');
+    const scene = new THREE.Scene();
+    const renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+    const camera = new THREE.PerspectiveCamera(50, canvas.clientWidth / canvas.clientHeight, 0.1, 1000);
+    
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.minDistance = 5;
+    controls.maxDistance = 20;
+
+    // --- CONSTANTS ---
+    const wallHeight = 1.5;
+    const wallThickness = 0.05;
+    const unitSize = 8; // Main floor width
+    const unitDepth = 6; // Main floor depth
+
+    // MATERIALS & COLORS
+    const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x1f3f66 }); // Dark Blue walls
+    // Changed floor color to Ash/Grey as requested
+    const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x666666 }); 
+    const labelMaterial = new THREE.MeshBasicMaterial({ color: 0xe0e0e0 }); // Light labels for dark background
+    let fontLoaded = null;
+    let currentPlanObjects = [];
+
+    // --- RESIZE HANDLER (Ensures Responsiveness) ---
+    function onResize() {
+      const width = Math.min(800, container.clientWidth * 0.9);
+      const height = Math.min(600, window.innerHeight * 0.75);
+
+      renderer.setSize(width, height);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+    }
+
+    // Set initial size and add listener
+    onResize();
+    window.addEventListener('resize', onResize);
+
+    // --- LIGHTS ---
+    const ambient = new THREE.AmbientLight(0xffffff, 0.8);
+    scene.add(ambient);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+    dirLight.position.set(5, 10, 7);
+    scene.add(dirLight);
+
+    // FLOOR BASE
+    const floorGeometry = new THREE.BoxGeometry(unitSize, 0.1, unitDepth);
+    const floorMesh = new THREE.Mesh(floorGeometry, floorMaterial);
+    floorMesh.position.y = -0.05;
+    scene.add(floorMesh);
+
+    // Initial Camera Position
+    camera.position.set(6, 7, 9);
+    camera.lookAt(0, 0, 0);
+
+    // --- CORE UTILITIES ---
+
+    function clearScene() {
+      currentPlanObjects.forEach(obj => scene.remove(obj));
+      currentPlanObjects = [];
+    }
+
+    function createWall(x, y, z, w, h, d) {
+      const geometry = new THREE.BoxGeometry(w, h, d);
+      const wall = new THREE.Mesh(geometry, wallMaterial);
+      wall.position.set(x, y, z);
+      scene.add(wall);
+      currentPlanObjects.push(wall);
+      return wall;
+    }
+
+    function addLabel(text, x, z) {
+      if (!fontLoaded) return;
+      
+      const textGeom = new THREE.TextGeometry(text, {
+        font: fontLoaded,
+        size: 0.15,
+        height: 0.01,
+        curveSegments: 3
+      });
+      textGeom.computeBoundingBox();
+      // Center the text within the room (approximation)
+      const xOffset = -0.5 * (textGeom.boundingBox.max.x - textGeom.boundingBox.min.x);
+
+      const textMesh = new THREE.Mesh(textGeom, labelMaterial);
+      textMesh.position.set(x + xOffset, 0.05, z); // Place label slightly above floor
+      textMesh.rotation.x = -Math.PI / 2; // Rotate flat on the floor
+      scene.add(textMesh);
+      currentPlanObjects.push(textMesh);
+    }
+
+    // --- FLOOR PLAN DEFINITIONS ---
+    
+    // Revised Plan V(E) for better symmetry and balance
+    function drawPlanV() {
+      clearScene();
+      
+      const hw = unitSize / 2; // 4
+      const hd = unitDepth / 2; // 3
+      const hy = wallHeight / 2; // 0.75
+
+      // --- Type V(E) Walls (Symmetric and Balanced) ---
+      
+      // Outer Boundary Walls (Kept 8x6)
+      createWall(0, hy, -hd, unitSize, wallHeight, wallThickness); // Back
+      createWall(0, hy, hd, unitSize, wallHeight, wallThickness); // Front
+      createWall(-hw, hy, 0, wallThickness, wallHeight, unitDepth); // Left
+      createWall(hw, hy, 0, wallThickness, wallHeight, unitDepth); // Right
+
+      // Main Horizontal Divides
+      createWall(0, hy, 1.5, unitSize, wallHeight, wallThickness); // Front zone (Balcony/Living)
+      createWall(0, hy, -1.5, unitSize, wallHeight, wallThickness); // Back zone (Kitchen/Utility)
+
+      // Central Living Area / Corridor (0 < z < 1.5)
+      // Vertical Bedroom Divides (creating two symmetric large sides)
+      createWall(1.5, hy, 0.75, wallThickness, wallHeight, 1.5); // Right Bedroom wall
+      createWall(-1.5, hy, 0.75, wallThickness, wallHeight, 1.5); // Left Bedroom wall
+
+      // Back Section (-1.5 < z < -3)
+      // Kitchen/Utility Divides
+      createWall(2.0, hy, -2.25, wallThickness, wallHeight, 1.5); // Right Kitchen boundary
+      createWall(-2.0, hy, -2.25, wallThickness, wallHeight, 1.5); // Left Utility boundary
+      
+      // --- Type V(E) Labels ---
+      addLabel('Living & Dining', 0, 2.25);
+      addLabel('Balcony', 3.0, 2.5);
+      addLabel('Master Bedroom', 2.5, 0.75);
+      addLabel('Bedroom 2', -2.5, 0.75);
+      addLabel('Kitchen', 3.0, -2.25);
+      addLabel('Utility', -3.0, -2.25);
+      addLabel('Bath 1', 0.5, -2.25);
+      addLabel('Bath 2', -0.5, -2.25);
+    }
+
+    // Plan VI(F) layout (Kept close to previous geometry for distinction)
+    function drawPlanVI() {
+      clearScene();
+
+      const hw = unitSize / 2; // 4
+      const hd = unitDepth / 2; // 3
+      const hy = wallHeight / 2; // 0.75
+
+      // --- Type VI(F) Walls ---
+      
+      // Outer Boundary Walls (Approximation)
+      createWall(0, hy, -hd, unitSize, wallHeight, wallThickness); // Back
+      createWall(0, hy, hd, unitSize, wallHeight, wallThickness); // Front
+      createWall(-hw, hy, 0, wallThickness, wallHeight, unitDepth); // Left
+      createWall(hw, hy, 0, wallThickness, wallHeight, unitDepth); // Right
+
+      // Internal Walls (Approximating a central core/hallway layout)
+
+      // Central Horizontal Divides
+      createWall(0, hy, 0, unitSize, wallHeight, wallThickness); // Main central divide
+      createWall(0, hy, -1.5, unitSize, wallHeight, wallThickness); // Back room divide
+
+      // Vertical Divides (Front/Living Section)
+      createWall(2, hy, 1.5, wallThickness, wallHeight, 3); // Right Bedroom wall
+      createWall(-2, hy, 1.5, wallThickness, wallHeight, 3); // Left Bedroom wall
+
+      // Vertical Divides (Back/Bedroom Section)
+      createWall(1.5, hy, -2.25, wallThickness, wallHeight, 1.5); // Right Bedroom divide
+      createWall(-0.5, hy, -2.25, wallThickness, wallHeight, 1.5); // Center Bath divide
+      createWall(-2.5, hy, -2.25, wallThickness, wallHeight, 1.5); // Left Bedroom divide
+
+      // --- Type VI(F) Labels ---
+      addLabel('Living Room', 0, 2.5);
+      addLabel('Dining Area', -1.0, 0.5);
+      addLabel('Master Bed', 3.0, 1.5);
+      addLabel('Bedroom 2', -3.0, 1.5);
+      addLabel('Bedroom 3', 3.0, -2.25);
+      addLabel('Kitchen', -1.5, -0.75);
+      addLabel('Bath 1', 1.0, -0.75);
+      addLabel('Bath 2', -0.5, -2.25);
+    }
+
+    // --- INITIALIZATION AND ANIMATION ---
+
+    // Load font and then draw the initial plan
+    const loader = new THREE.FontLoader();
+    loader.load('https://threejs.org/examples/fonts/helvetiker_regular.typeface.json', function (font) {
+      fontLoaded = font;
+      // Draw Type V(E) initially
+      drawPlanV(); 
+    });
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    // Wait for the window to load before starting the animation loop
+    window.onload = function () {
+      animate();
+    }
+    
+    // --- EVENT LISTENERS ---
+    
+    document.getElementById('typeV').addEventListener('click', () => {
+      if (fontLoaded) {
+        drawPlanV();
+        document.getElementById('typeV').classList.add('active');
+        document.getElementById('typeF').classList.remove('active');
+      }
+    });
+
+    document.getElementById('typeF').addEventListener('click', () => {
+      if (fontLoaded) {
+        drawPlanVI();
+        document.getElementById('typeV').classList.remove('active');
+        document.getElementById('typeF').classList.add('active');
+      }
+    });
+
+  </script>
+</body>
+</html>
